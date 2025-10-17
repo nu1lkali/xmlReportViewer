@@ -43,7 +43,7 @@ Internet Explorer 由两个主要部分组成：
 
 ---
 
-## 🛠️ 技术栈
+## 技术栈
 
 - **Python 3.10**
 - `lxml`：用于 XML/XSLT 解析与转换
