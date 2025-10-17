@@ -12,7 +12,7 @@ def transform_xml_to_html(xml_path):
         with open(xml_path, 'r', encoding='utf-8') as f:
             xml_text = f.read()
 
-        # 修复：正则更健壮，支持空格、大小写、单引号/双引号
+        # 正则支持空格、大小写、单引号/双引号
         match = re.search(
             r'<\?xml-stylesheet\s+[^?]*?href\s*=\s*[\'"]([^\'"]+)[\'"][^?]*?\?>',
             xml_text,
