@@ -12,7 +12,7 @@ from lxml import etree
 def get_clean_path(path):
     if not path or not isinstance(path, str):
         return path
-    # 去除引号（常见于带空格路径）
+    # 去除引号
     path = path.strip()
     if len(path) >= 2 and path.startswith('"') and path.endswith('"'):
         path = path[1:-1].strip()
