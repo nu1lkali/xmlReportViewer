@@ -1,4 +1,3 @@
-# viewer.py - XML 报告查看器 (修复 PyInstaller 路径问题)
 import os
 import sys
 import re
