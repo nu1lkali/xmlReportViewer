@@ -1,4 +1,4 @@
-# viewer.py - XML 报告查看器
+# viewer.py - XML 报告查看器 (修复 PyInstaller 路径问题)
 import os
 import sys
 import re
@@ -6,9 +6,50 @@ import webview
 from lxml import etree
 
 
+# -----------------------------
+# 工具函数：安全处理路径
+# -----------------------------
+def get_clean_path(path):
+    if not path or not isinstance(path, str):
+        return path
+    # 去除引号（常见于带空格路径）
+    path = path.strip()
+    if len(path) >= 2 and path.startswith('"') and path.endswith('"'):
+        path = path[1:-1].strip()
+    if len(path) >= 2 and path.startswith("'") and path.endswith("'"):
+        path = path[1:-1].strip()
+    # 规范化路径
+    return os.path.normpath(path)
+
+
+# -----------------------------
+# 启用 Windows 长路径 & UTF-8
+# -----------------------------
+if sys.platform == "win32":
+    try:
+        import ctypes
+        # 启用长路径支持（>260 字符）
+        ctypes.windll.kernel32.SetThreadErrorMode(0x0001)
+        os.environ['PYTHONUTF8'] = '1'
+        os.environ['PYTHONIOENCODING'] = 'utf-8'
+    except:
+        pass
+
+
+# -----------------------------
+# XML -> HTML 转换
+# -----------------------------
 def transform_xml_to_html(xml_path):
     """将 XML + XSL 转换为 HTML"""
     try:
+        xml_path = get_clean_path(xml_path)
+        if not xml_path:
+            return "<div style='color:red; padding:20px;'>❌ 无效文件路径</div>"
+
+        print(f"[转换] 正在处理: {xml_path}")
+        print(f"[转换] 文件存在? {os.path.exists(xml_path)}")
+        print(f"[转换] 当前工作目录: {os.getcwd()}")
+
         if not os.path.exists(xml_path):
             return f"<div style='color:red; padding:20px;'>❌ 文件不存在: {xml_path}</div>"
 
@@ -48,9 +89,15 @@ def transform_xml_to_html(xml_path):
         return str(result)
 
     except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"[转换] 失败: {str(e)}\n{error_detail}")
         return f"<div style='color:red; font-family:Arial; padding:20px;'>❌ 转换失败: {str(e)}</div>"
 
 
+# -----------------------------
+# API 接口类
+# -----------------------------
 class API:
     def __init__(self):
         self.current_file = None  # 当前打开的文件路径
@@ -62,12 +109,21 @@ class API:
             return {'error': 'No files'}
 
         file_path = files[0]
-        print(f"[API] 收到拖拽文件: {file_path}")
+        print(f"[API] 收到拖拽文件: {file_path} (类型: {type(file_path)})")
+
+        # 清理路径
+        file_path = get_clean_path(file_path)
+        if not file_path:
+            return {'error': 'Invalid file path'}
+
+        print(f"[API] 清理后路径: {file_path}")
 
         if not file_path.lower().endswith('.xml'):
             return {'error': 'Only .xml files'}
 
         if not os.path.exists(file_path):
+            print(f"[API] 文件不存在: {file_path}")
+            print(f"[API] 当前工作目录: {os.getcwd()}")
             return {'error': 'File not found'}
 
         html = transform_xml_to_html(file_path)
@@ -85,15 +141,16 @@ class API:
         if not self.current_file:
             return {'action': 'show_error', 'message': '没有文件可刷新'}
 
-        if not os.path.exists(self.current_file):
+        clean_path = get_clean_path(self.current_file)
+        if not os.path.exists(clean_path):
             return {'action': 'show_error', 'message': '文件已被删除或移动'}
 
-        print(f"[API] 正在刷新: {self.current_file}")
-        html = transform_xml_to_html(self.current_file)
+        print(f"[API] 正在刷新: {clean_path}")
+        html = transform_xml_to_html(clean_path)
         return {
             'action': 'update_content',
             'html': html,
-            'current_file': self.current_file
+            'current_file': clean_path
         }
 
     def go_home(self):
@@ -129,8 +186,13 @@ class API:
 
         if not file_path:
             return {'error': 'No file selected'}
+
+        file_path = get_clean_path(file_path)
         if not file_path.lower().endswith('.xml'):
             return {'error': 'Only .xml files'}
+
+        if not os.path.exists(file_path):
+            return {'error': 'File not found'}
 
         html = transform_xml_to_html(file_path)
         self.current_file = file_path
@@ -143,6 +205,9 @@ class API:
         }
 
 
+# -----------------------------
+# 主函数
+# -----------------------------
 def main():
     api = API()
 
@@ -158,9 +223,19 @@ def main():
     # 检查是否通过拖拽启动（拖文件到 .exe 上）
     auto_file = None
     if len(sys.argv) > 1:
-        file_path = sys.argv[1]
-        if os.path.isfile(file_path) and file_path.lower().endswith('.xml'):
-            auto_file = file_path
+        raw_path = sys.argv[1]
+        print(f"[启动] 原始路径: {repr(raw_path)}")
+        auto_file = get_clean_path(raw_path)
+        print(f"[启动] 清理后路径: {auto_file}")
+
+        if not os.path.exists(auto_file):
+            print(f"[启动] ❌ 文件不存在: {auto_file}")
+            auto_file = None
+        elif not auto_file.lower().endswith('.xml'):
+            print(f"[启动] ❌ 不是 XML 文件: {auto_file}")
+            auto_file = None
+    else:
+        print("[启动] 无启动参数")
 
     initial_html = HOME_CONTENT
     auto_script = ""
