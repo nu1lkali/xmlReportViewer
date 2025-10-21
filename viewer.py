@@ -1,18 +1,21 @@
-import sys
+# viewer.py - XML 报告查看器
 import os
+import sys
 import re
+import webview
 from lxml import etree
-from tkinter import Tk, Frame, Button, Label, messagebox, filedialog
-from tkinterdnd2 import TkinterDnD, DND_FILES
-from tkinterweb import HtmlFrame
 
 
 def transform_xml_to_html(xml_path):
+    """将 XML + XSL 转换为 HTML"""
     try:
+        if not os.path.exists(xml_path):
+            return f"<div style='color:red; padding:20px;'>❌ 文件不存在: {xml_path}</div>"
+
         with open(xml_path, 'r', encoding='utf-8') as f:
             xml_text = f.read()
 
-        # 正则支持空格、大小写、单引号/双引号
+        # 提取 XSL 引用
         match = re.search(
             r'<\?xml-stylesheet\s+[^?]*?href\s*=\s*[\'"]([^\'"]+)[\'"][^?]*?\?>',
             xml_text,
@@ -22,7 +25,6 @@ def transform_xml_to_html(xml_path):
             return """
             <div style="padding:20px; color:red; font-family:Arial;">
                 <h3>❌ XML 未声明 XSL 样式表</h3>
-                <p>请确保包含类似：</p>
                 <pre>&lt;?xml-stylesheet type="text/xsl" href="your_style.xsl"?&gt;</pre>
             </div>
             """
@@ -33,164 +35,337 @@ def transform_xml_to_html(xml_path):
 
         if not os.path.exists(xsl_path):
             return f"""
-            <div style="padding:20px; color:red; font-family:Arial;">
+            <div style="padding:20px; color:red;">
                 <h3>❌ 找不到 XSL 文件</h3>
-                <p>查找路径：</p>
                 <pre>{xsl_path}</pre>
-                <p>声明的 href：</p>
-                <pre>{xsl_href}</pre>
             </div>
             """
 
-        # 执行 XSLT 转换
         xml_doc = etree.parse(xml_path)
         xsl_doc = etree.parse(xsl_path)
         transform = etree.XSLT(xsl_doc)
         result = transform(xml_doc)
-        html = str(result)
-
-        # 确保有基本结构
-        if "<html" not in html:
-            html = f"<html><body>{html}</body></html>"
-        if "<head>" not in html:
-            html = html.replace("<html>", '<html><head><meta charset="utf-8"></head>')
-
-        return html
+        return str(result)
 
     except Exception as e:
-        return f"""
-        <html>
-        <head><meta charset="utf-8"></head>
-        <body style="font-family:Arial;padding:20px;color:red;">
-            <h3>❌ 转换失败</h3>
-            <pre>{str(e)}</pre>
-        </body>
-        </html>
-        """
+        return f"<div style='color:red; font-family:Arial; padding:20px;'>❌ 转换失败: {str(e)}</div>"
 
 
-# ========================
-# 主窗口
-# ========================
-
-# 新增：全局函数 - 美化按钮
-def style_button(button):
-    """
-    为 Tkinter 按钮应用现代化样式
-    """
-    button.config(
-        bg='#5b9bd5',                    # 背景色 (蓝色调)
-        fg='white',                      # 前景色 (白色文字)
-        activebackground='#437cbb',      # 悬停时背景色
-        activeforeground='white',        # 悬停时文字颜色
-        relief='flat',                   # 扁平风格 (无边框)
-        bd=0,                            # 边框宽度设为0
-        padx=15,                         # 水平内边距
-        pady=8,                          # 垂直内边距 (增加高度，解决"太扁"问题)
-        font=("微软雅黑", 10, "bold"),   # 字体
-        cursor='hand2'                   # 鼠标指针样式
-    )
-
-    # 添加鼠标悬停和离开的动态效果
-    def on_enter(e):
-        button['background'] = '#437cbb'
-        button.config(relief='raised', bd=2)  # 模拟轻微凸起
-
-    def on_leave(e):
-        button['background'] = '#5b9bd5'
-        button.config(relief='flat', bd=0)    # 恢复扁平
-
-    button.bind("<Enter>", on_enter)
-    button.bind("<Leave>", on_leave)
-
-
-class ReportViewer(TkinterDnD.Tk):
+class API:
     def __init__(self):
-        super().__init__()
-        self.title("XML 报告查看器 - 内置渲染")
-        self.geometry("1000x700")
-        self.minsize(600, 400)
+        self.current_file = None  # 当前打开的文件路径
 
-        header = Frame(self)
-        header.pack(fill="x", padx=10, pady=10)
-        Label(header, text="XML 报告查看器", font=("微软雅黑", 14, "bold")).pack(side="left")
-        Label(header, text=" | 拖入 .xml 文件即可查看", fg="gray").pack(side="left")
+    def on_drop(self, data):
+        """处理拖拽事件"""
+        files = data.get('files', [])
+        if not files:
+            return {'error': 'No files'}
 
-        # 使用 HtmlFrame，关闭调试消息
-        self.html_frame = HtmlFrame(self, messages_enabled=False)
-        self.html_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        file_path = files[0]
+        print(f"[API] 收到拖拽文件: {file_path}")
 
-        footer = Frame(self)
-        footer.pack(fill="x", padx=10, pady=10)
+        if not file_path.lower().endswith('.xml'):
+            return {'error': 'Only .xml files'}
 
-        # 创建按钮并应用美化样式
-        # 打开文件
-        btn_open = Button(footer, text="打开文件", command=self.load_file, width=12)
-        style_button(btn_open)
-        btn_open.pack(side="left", padx=5)
+        if not os.path.exists(file_path):
+            return {'error': 'File not found'}
 
-        # 返回首页
-        btn_home = Button(footer, text="返回首页", command=self.show_welcome, width=12)
-        style_button(btn_home)
-        btn_home.pack(side="left", padx=5)
+        html = transform_xml_to_html(file_path)
+        self.current_file = file_path  # 设置当前文件
 
-        # 退出
-        btn_quit = Button(footer, text="退出", command=self.quit, width=12)
-        style_button(btn_quit)
-        btn_quit.pack(side="right", padx=5)
+        return {
+            'success': True,
+            'html': html,
+            'base_url': f'file:///{os.path.dirname(os.path.abspath(file_path)).replace(os.sep, "/")}/',
+            'current_file': file_path
+        }
 
-        self.drop_target_register(DND_FILES)
-        self.dnd_bind('<<Drop>>', self.on_drop)
+    def refresh_current(self):
+        """刷新当前文件"""
+        if not self.current_file:
+            return {'action': 'show_error', 'message': '没有文件可刷新'}
 
-        self.show_welcome()
+        if not os.path.exists(self.current_file):
+            return {'action': 'show_error', 'message': '文件已被删除或移动'}
 
-    def show_welcome(self):
-        welcome_html = """
-        <html>
-        <head><meta charset="utf-8"></head>
-        <body style="font-family:Arial; padding:40px; text-align:center; color:#555;">
-            <h2>欢迎使用 XML 报告查看器</h2>
-            <p style="font-size:16px;">将 .xml 报告文件拖入此窗口，即可在内部直接查看</p>
-            <p><br>支持自动加载 XSL 样式并渲染</p>
-        </body>
-        </html>
-        """
-        # 使用 load_html() 方法（v4+ 的正确 API）
-        self.html_frame.load_html(welcome_html)
+        print(f"[API] 正在刷新: {self.current_file}")
+        html = transform_xml_to_html(self.current_file)
+        return {
+            'action': 'update_content',
+            'html': html,
+            'current_file': self.current_file
+        }
 
-    def load_file(self):
+    def go_home(self):
+        """用户返回首页，清空当前文件状态"""
+        print("[API] 用户返回首页")
+        self.current_file = None
+        return {'action': 'clear_content'}
+
+    def exit_app(self):
+        """退出应用"""
+        print("[API] 收到退出请求")
+        import threading
+        threading.Thread(target=self._exit_soon, daemon=True).start()
+        return None
+
+    def _exit_soon(self):
+        import time
+        time.sleep(0.2)
+        os._exit(0)
+
+    def open_file_dialog(self):
+        """打开文件对话框"""
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.wm_attributes('-topmost', 1)
         file_path = filedialog.askopenfilename(
             title="选择 XML 文件",
-            filetypes=[("XML 文件", "*.xml")]
+            filetypes=[("XML files", "*.xml"), ("All files", "*.*")]
         )
-        if file_path:
-            self.display_report(file_path)
+        root.destroy()
 
-    def display_report(self, xml_path):
-        html = transform_xml_to_html(xml_path)
-        # 使用 load_html()
-        self.html_frame.load_html(html)
-        self.title(f"报告查看器 - {os.path.basename(xml_path)}")
+        if not file_path:
+            return {'error': 'No file selected'}
+        if not file_path.lower().endswith('.xml'):
+            return {'error': 'Only .xml files'}
 
-    def on_drop(self, event):
-        file_path = event.data.strip().strip("{}")
-        if file_path.lower().endswith('.xml') and os.path.exists(file_path):
-            self.display_report(file_path)
-        else:
-            messagebox.showwarning("提示", "请拖入有效的 .xml 文件")
+        html = transform_xml_to_html(file_path)
+        self.current_file = file_path
+
+        return {
+            'success': True,
+            'html': html,
+            'base_url': f'file:///{os.path.dirname(os.path.abspath(file_path)).replace(os.sep, "/")}/',
+            'current_file': file_path
+        }
 
 
 def main():
-    if len(sys.argv) > 1:
-        xml_file = sys.argv[1]
-        if os.path.isfile(xml_file) and xml_file.lower().endswith('.xml'):
-            app = ReportViewer()
-            app.display_report(xml_file)
-            app.mainloop()
-            return
+    api = API()
 
-    app = ReportViewer()
-    app.mainloop()
+    # 首页内容
+    HOME_CONTENT = """
+        <div style="text-align:center; color:#888; padding:40px 0;">
+            <h2>欢迎使用 XML 报告查看器</h2>
+            <p>将 .xml 报告文件拖入此窗口</p>
+            <p style="color:#888;">支持右键复制、全选、粘贴到 Excel</p>
+        </div>
+    """
+
+    # 检查是否通过拖拽启动（拖文件到 .exe 上）
+    auto_file = None
+    if len(sys.argv) > 1:
+        file_path = sys.argv[1]
+        if os.path.isfile(file_path) and file_path.lower().endswith('.xml'):
+            auto_file = file_path
+
+    initial_html = HOME_CONTENT
+    auto_script = ""
+
+    if auto_file:
+        print(f"[启动] 自动加载文件: {auto_file}")
+        html = transform_xml_to_html(auto_file)
+        api.current_file = auto_file
+        initial_html = html
+
+        display_path = auto_file.replace('\\', '/')
+
+        auto_script = f"""
+        <script>
+            setTimeout(() => {{
+                document.getElementById('status').innerText = '当前文件: {display_path}';
+            }}, 100);
+        </script>
+        """
+    else:
+        auto_script = ""
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>XML 查看器</title>
+        <style>
+            body {{
+                font-family: Arial;
+                margin: 0;
+                padding: 40px;
+                height: 100vh;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                background: #f5f5f5;
+                transition: background 0.3s;
+            }}
+            #content {{
+                flex: 1;
+                overflow: auto;
+                margin-top: 20px;
+                border-top: 1px solid #ddd;
+                padding-top: 20px;
+            }}
+            .controls {{
+                position: absolute;
+                top: 10px;
+                right: 10px;
+                display: flex;
+                gap: 8px;
+            }}
+            .controls button {{
+                padding: 5px 10px;
+                font-size: 12px;
+            }}
+            #status {{
+                position: absolute;
+                top: 10px;
+                left: 10px;
+                color: #666;
+                font-size: 12px;
+            }}
+            #debug {{
+                position: fixed;
+                bottom: 10px;
+                left: 10px;
+                color: blue;
+                font-size: 12px;
+                z-index: 999;
+            }}
+            #content, #content * {{
+                -webkit-user-select: text !important;
+                -moz-user-select: text !important;
+                -ms-user-select: text !important;
+                user-select: text !important;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="controls">
+            <button onclick="refreshPage()">🔄 刷新</button>
+            <button onclick="goHome()">🏠 首页</button>
+            <button onclick="exitApp()">🚪 退出</button>
+            <button onclick="openFile()">📂 打开 XML</button>
+        </div>
+        <div id="status"></div>
+        <div id="content">
+            {initial_html}
+        </div>
+        <div id="debug"></div>
+        {auto_script}
+    </body>
+    <script>
+        function debug(msg) {{
+            document.getElementById('debug').innerText = msg;
+            console.log('[DEBUG]', msg);
+        }}
+
+        window.addEventListener('pywebviewready', () => {{
+            debug('pywebview API 已就绪');
+        }});
+
+        async function refreshPage() {{
+            try {{
+                const response = await window.pywebview.api.refresh_current();
+                if (response.action === 'update_content') {{
+                    document.getElementById('content').innerHTML = response.html;
+                }} else if (response.message) {{
+                    alert('操作失败: ' + response.message);
+                }}
+            }} catch (e) {{
+                alert('刷新失败: ' + e.message);
+            }}
+        }}
+
+        async function goHome() {{
+            try {{
+                await window.pywebview.api.go_home();
+            }} catch (e) {{
+                console.error('返回首页失败:', e);
+            }}
+            document.getElementById('content').innerHTML = `{HOME_CONTENT}`;
+            document.getElementById('status').innerText = '';
+        }}
+
+        async function exitApp() {{
+            if (confirm('确定退出？')) {{
+                await window.pywebview.api.exit_app().catch(() => {{}});
+            }}
+        }}
+
+        async function openFile() {{
+            try {{
+                const response = await window.pywebview.api.open_file_dialog();
+                if (response.success) {{
+                    document.getElementById('content').innerHTML = response.html;
+                    document.getElementById('status').innerText = '当前文件: ' + response.current_file.replace(/\\\\/g, '/');
+                }} else {{
+                    alert('打开失败: ' + (response.error || '未知'));
+                }}
+            }} catch (e) {{
+                alert('调用失败: ' + e.message);
+            }}
+        }}
+
+        // 拖拽事件
+        ['dragover', 'dragenter'].forEach(eventName => {{
+            document.addEventListener(eventName, (e) => {{
+                e.preventDefault();
+                e.stopPropagation();
+                document.body.style.background = '#e0f7fa';
+            }}, false);
+        }});
+
+        document.addEventListener('dragleave', (e) => {{
+            e.preventDefault();
+            e.stopPropagation();
+            document.body.style.background = '#f5f5f5';
+        }}, false);
+
+        document.addEventListener('drop', (e) => {{
+            e.preventDefault();
+            e.stopPropagation();
+            document.body.style.background = '#f5f5f5';
+            const files = Array.from(e.dataTransfer.files).map(f => f.path || f.name).filter(Boolean);
+            if (files.length === 0) {{
+                alert('无法读取文件路径');
+                return;
+            }}
+            handleDrop(files);
+        }}, false);
+
+        async function handleDrop(files) {{
+            try {{
+                const response = await window.pywebview.api.on_drop({{files}});
+                if (response.success) {{
+                    document.getElementById('content').innerHTML = response.html;
+                    document.getElementById('status').innerText = '当前文件: ' + response.current_file.replace(/\\\\/g, '/');
+                }} else {{
+                    document.getElementById('content').innerHTML = `<div style="color:red; padding:20px;">错误: ${{response.error}}</div>`;
+                }}
+            }} catch (err) {{
+                console.error(err);
+                document.getElementById('content').innerHTML = `<div style="color:red; padding:20px;">调用失败: ${{err.message}}</div>`;
+            }}
+        }}
+    </script>
+    </html>
+    """
+
+    window = webview.create_window(
+        "XML 报告查看器",
+        html=html_content,
+        js_api=api,
+        width=1000,
+        height=700
+    )
+
+    # 使用 Edge Chromium
+    webview.start(debug=False, gui='edgechromium')
+
+    sys.exit(0)
 
 
 if __name__ == '__main__':
